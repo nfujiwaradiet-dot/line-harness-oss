@@ -139,6 +139,7 @@ export interface UpsertFriendInput {
   displayName?: string | null;
   pictureUrl?: string | null;
   statusMessage?: string | null;
+  lineAccountId?: string | null;
 }
 
 export async function upsertFriend(
@@ -149,6 +150,18 @@ export async function upsertFriend(
   const existing = await getFriendByLineUserId(db, input.lineUserId);
 
   if (existing) {
+    // Also backfill line_account_id when it was previously null and we now know it.
+    const shouldSetAccountId = input.lineAccountId && !existing.line_account_id;
+    const accountIdClause = shouldSetAccountId ? ', line_account_id = ?' : '';
+    const binds: unknown[] = [
+      'displayName' in input ? (input.displayName ?? null) : existing.display_name,
+      'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
+      'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
+      now,
+    ];
+    if (shouldSetAccountId) binds.push(input.lineAccountId!);
+    binds.push(input.lineUserId);
+
     await db
       .prepare(
         `UPDATE friends
@@ -156,16 +169,10 @@ export async function upsertFriend(
              picture_url = ?,
              status_message = ?,
              is_following = 1,
-             updated_at = ?
+             updated_at = ?${accountIdClause}
          WHERE line_user_id = ?`,
       )
-      .bind(
-        'displayName' in input ? (input.displayName ?? null) : existing.display_name,
-        'pictureUrl' in input ? (input.pictureUrl ?? null) : existing.picture_url,
-        'statusMessage' in input ? (input.statusMessage ?? null) : existing.status_message,
-        now,
-        input.lineUserId,
-      )
+      .bind(...binds)
       .run();
 
     return (await getFriendByLineUserId(db, input.lineUserId))!;
@@ -174,8 +181,8 @@ export async function upsertFriend(
   const id = crypto.randomUUID();
   await db
     .prepare(
-      `INSERT INTO friends (id, line_user_id, display_name, picture_url, status_message, is_following, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+      `INSERT INTO friends (id, line_user_id, display_name, picture_url, status_message, is_following, line_account_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)`,
     )
     .bind(
       id,
@@ -183,6 +190,7 @@ export async function upsertFriend(
       input.displayName ?? null,
       input.pictureUrl ?? null,
       input.statusMessage ?? null,
+      input.lineAccountId ?? null,
       now,
       now,
     )

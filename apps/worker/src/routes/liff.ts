@@ -518,21 +518,27 @@ liffRoutes.get('/auth/line', async (c) => {
  * Same query params as /auth/line. No HTML rendering, no smart logic.
  */
 liffRoutes.get('/auth/oauth', async (c) => {
-  const ref = c.req.query('ref') || '';
-  const redirect = c.req.query('redirect') || '';
-  const formId = c.req.query('form') || '';
-  const gateParam = c.req.query('gate') || '';
-  const xhParam = c.req.query('xh') || '';
-  const gclid = c.req.query('gclid') || '';
-  const fbclid = c.req.query('fbclid') || '';
-  const twclid = c.req.query('twclid') || '';
-  const ttclid = c.req.query('ttclid') || '';
-  const utmSource = c.req.query('utm_source') || '';
-  const utmMedium = c.req.query('utm_medium') || '';
-  const utmCampaign = c.req.query('utm_campaign') || '';
-  const accountParam = c.req.query('account') || '';
-  const uidParam = c.req.query('uid') || '';
-  const igParam = c.req.query('ig') || '';
+  // When opened via LIFF, original query params arrive as liff.state=?ref=xxx&...
+  // Parse them and merge so downstream code can use q() as normal.
+  const liffStateRaw = c.req.query('liff.state') || '';
+  const liffStateParams = new URLSearchParams(liffStateRaw.startsWith('?') ? liffStateRaw.slice(1) : liffStateRaw);
+  const q = (key: string) => c.req.query(key) || liffStateParams.get(key) || '';
+
+  const ref = q('ref');
+  const redirect = q('redirect');
+  const formId = q('form');
+  const gateParam = q('gate');
+  const xhParam = q('xh');
+  const gclid = q('gclid');
+  const fbclid = q('fbclid');
+  const twclid = q('twclid');
+  const ttclid = q('ttclid');
+  const utmSource = q('utm_source');
+  const utmMedium = q('utm_medium');
+  const utmCampaign = q('utm_campaign');
+  const accountParam = q('account');
+  const uidParam = q('uid');
+  const igParam = q('ig');
   let poolAccount = '';
   const baseUrl = new URL(c.req.url).origin;
 
@@ -640,11 +646,24 @@ liffRoutes.get('/auth/callback', async (c) => {
     // Multi-account: resolve LINE Login credentials from DB
     let loginChannelId = c.env.LINE_LOGIN_CHANNEL_ID;
     let loginChannelSecret = c.env.LINE_LOGIN_CHANNEL_SECRET;
+    let resolvedLineAccountId: string | null = null;
     if (accountParam) {
       const account = await getLineAccountByChannelId(c.env.DB, accountParam);
       if (account?.login_channel_id && account?.login_channel_secret) {
         loginChannelId = account.login_channel_id;
         loginChannelSecret = account.login_channel_secret;
+      }
+      if (account?.id) {
+        resolvedLineAccountId = account.id;
+      }
+    }
+    // Fallback: no account param → use the single active account's ID so
+    // line_account_id is never stored as NULL on single-account installs.
+    if (!resolvedLineAccountId) {
+      const allAccounts = await getLineAccounts(c.env.DB);
+      const activeAccounts = allAccounts.filter(a => a.is_active);
+      if (activeAccounts.length === 1) {
+        resolvedLineAccountId = activeAccounts[0].id;
       }
     }
 
@@ -720,6 +739,7 @@ liffRoutes.get('/auth/callback', async (c) => {
       displayName,
       pictureUrl,
       statusMessage: null,
+      lineAccountId: resolvedLineAccountId,
     });
 
     // IG cross-platform UUID linkage (OAuth path — new friends & returning users
@@ -1319,7 +1339,11 @@ liffRoutes.get('/api/analytics/ref-summary', async (c) => {
   try {
     const db = c.env.DB;
     const lineAccountId = c.req.query('lineAccountId');
-    const accountFilter = lineAccountId ? 'AND f.line_account_id = ?' : '';
+    // Include friends with line_account_id IS NULL when there's only one active account
+    // (they belong to that account but weren't tagged due to edge cases in registration).
+    const accountFilter = lineAccountId
+      ? 'AND (f.line_account_id = ? OR (f.line_account_id IS NULL AND (SELECT COUNT(*) FROM line_accounts WHERE is_active = 1) = 1))'
+      : '';
     const accountBinds = lineAccountId ? [lineAccountId] : [];
 
     // friends 起点で集計することで、entry_routes に登録されていない ref
@@ -1352,12 +1376,12 @@ liffRoutes.get('/api/analytics/ref-summary', async (c) => {
       }>();
 
     const totalStmt = lineAccountId
-      ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE line_account_id = ?`).bind(lineAccountId)
-      : db.prepare(`SELECT COUNT(*) as count FROM friends`);
+      ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND (line_account_id = ? OR (line_account_id IS NULL AND (SELECT COUNT(*) FROM line_accounts WHERE is_active = 1) = 1))`).bind(lineAccountId)
+      : db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1`);
     const totalFriendsRes = await totalStmt.first<{ count: number }>();
 
     const refStmt = lineAccountId
-      ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != '' AND line_account_id = ?`).bind(lineAccountId)
+      ? db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != '' AND (line_account_id = ? OR (line_account_id IS NULL AND (SELECT COUNT(*) FROM line_accounts WHERE is_active = 1) = 1))`).bind(lineAccountId)
       : db.prepare(`SELECT COUNT(*) as count FROM friends WHERE ref_code IS NOT NULL AND ref_code != ''`);
     const friendsWithRefRes = await refStmt.first<{ count: number }>();
 

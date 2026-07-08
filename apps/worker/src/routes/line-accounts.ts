@@ -70,7 +70,7 @@ lineAccounts.get('/api/line-accounts', async (c) => {
       items.map(async (item) => {
         const [profile, friendCount, scenarioCount, msgCount] = await Promise.all([
           fetchBotProfile(item.channel_access_token),
-          db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND line_account_id = ?`).bind(item.id).first<{ count: number }>(),
+          db.prepare(`SELECT COUNT(*) as count FROM friends WHERE is_following = 1 AND (line_account_id = ? OR line_account_id IS NULL)`).bind(item.id).first<{ count: number }>(),
           db.prepare(
             `SELECT COUNT(*) as count FROM friend_scenarios fs
              INNER JOIN friends f ON f.id = fs.friend_id

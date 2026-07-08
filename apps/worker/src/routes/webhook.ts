@@ -110,6 +110,19 @@ webhook.post('/webhook', async (c) => {
     return c.json({ status: 'ok' }, 200);
   }
 
+  // Fallback: if signature matched via envSecret but no DB account matched the secret,
+  // use the single active account as the matched account (common on fresh installs where
+  // LINE_CHANNEL_SECRET env var differs from the DB-stored value).
+  if (!matchedAccountId) {
+    const accounts = await getLineAccounts(db);
+    const activeAccounts = accounts.filter(a => a.is_active);
+    if (activeAccounts.length === 1) {
+      matchedAccountId = activeAccounts[0].id;
+      channelAccessToken = activeAccounts[0].channel_access_token;
+      console.log(`[webhook] matchedAccountId fallback to single active account: ${matchedAccountId}`);
+    }
+  }
+
   let body: WebhookRequestBody;
   try {
     body = JSON.parse(rawBody) as WebhookRequestBody;
@@ -168,6 +181,7 @@ async function handleEvent(
       displayName: profile?.displayName ?? null,
       pictureUrl: profile?.pictureUrl ?? null,
       statusMessage: profile?.statusMessage ?? null,
+      lineAccountId: lineAccountId ?? null,
     });
 
     console.log(`[follow] friend.id=${friend.id} friend.line_account_id=${(friend as any).line_account_id}`);

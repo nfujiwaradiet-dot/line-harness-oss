@@ -653,6 +653,26 @@ async function scheduled(
     }
   }
 
+  // Backfill line_account_id = null — every 5-minute tick.
+  // Covers edge cases where webhook/LIFF paths fail to set it (e.g. env-secret
+  // mismatch, missing account param). Only runs when exactly one active account
+  // exists so there is no ambiguity about which account owns the friend.
+  try {
+    const activeAccounts = dbAccounts.filter(a => a.is_active);
+    if (activeAccounts.length === 1) {
+      const accountId = activeAccounts[0].id;
+      const result = await env.DB
+        .prepare(`UPDATE friends SET line_account_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours') WHERE line_account_id IS NULL`)
+        .bind(accountId)
+        .run();
+      if (result.meta.changes > 0) {
+        console.log(`[backfill] set line_account_id=${accountId} for ${result.meta.changes} friends`);
+      }
+    }
+  } catch (e) {
+    console.error('[backfill] line_account_id error:', e);
+  }
+
   // Cross-account duplicate detection — disabled.
   // The cron used to materialize duplicates into the tag system but the 1k-subrequest
   // budget can't drain a 1k+ candidate backlog, and a live SELECT against

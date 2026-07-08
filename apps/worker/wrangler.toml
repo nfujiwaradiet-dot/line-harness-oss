@@ -13,7 +13,7 @@ workers_dev = true
 # デフォルト = テスト環境 (noda@)
 # 使い方: npx wrangler deploy
 # ═══════════════════════════════════════════════════════════════
-account_id = "YOUR_DEV_ACCOUNT_ID"
+account_id = "b059bd1cfba524673e94dccb5c20f9c8"
 
 [assets]
 directory = "dist/client"
@@ -22,7 +22,7 @@ binding = "ASSETS"
 [[d1_databases]]
 binding = "DB"
 database_name = "line-harness"
-database_id = "YOUR_DEV_D1_DATABASE_ID"
+database_id = "55997758-9556-4988-9b11-59ca907322ac"
 
 [[r2_buckets]]
 binding = "IMAGES"
@@ -38,14 +38,14 @@ crons = ["*/5 * * * *", "0 */6 * * *"]
 # ═══════════════════════════════════════════════════════════════
 [vars]
 WORKER_NAME = "line-harness"
-ADMIN_PAGES_PROJECT = "line-harness-admin"
+ADMIN_PAGES_PROJECT = "line-harness-web"
 LIFF_PAGES_PROJECT = "line-harness-liff"
-D1_DATABASE_ID = "YOUR_DEV_D1_DATABASE_ID"
+D1_DATABASE_ID = "55997758-9556-4988-9b11-59ca907322ac"
 MANIFEST_URL = "https://github.com/Shudesu/line-harness-oss/releases/latest/download/release-manifest.json"
-WORKER_PUBLIC_URL = "https://line-harness.workers.dev"
-ADMIN_PUBLIC_URL = "https://line-harness-admin.pages.dev"
+WORKER_PUBLIC_URL = "https://line-harness.n-fujiwara-diet.workers.dev"
+ADMIN_PUBLIC_URL = "https://line-harness-web-p8k.pages.dev"
 LIFF_PUBLIC_URL = "https://line-harness-liff.pages.dev"
-CF_ACCOUNT_ID = "YOUR_DEV_ACCOUNT_ID"
+CF_ACCOUNT_ID = "b059bd1cfba524673e94dccb5c20f9c8"
 
 # ═══════════════════════════════════════════════════════════════
 # 本番環境
