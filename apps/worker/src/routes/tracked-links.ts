@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import {
   getTrackedLinks,
   getTrackedLinkById,
+  getTrackedLinkByIdOrShortCode,
   createTrackedLink,
   updateTrackedLink,
   deleteTrackedLink,
@@ -9,22 +10,27 @@ import {
   getLinkClicks,
   getFriendByLineUserId,
 } from '@line-crm/db';
-import { addTagToFriend, enrollFriendInScenario } from '@line-crm/db';
+import { enrollFriendInScenario } from '@line-crm/db';
+import { attachTagAndFireSideEffects } from '../services/friend-tag-attach.js';
 import type { TrackedLink } from '@line-crm/db';
 import type { Env } from '../index.js';
 import { isLinkPreviewBot } from '../lib/og-bot.js';
 import { buildOgHtml } from '../lib/og-html.js';
 import { resolveOgForTrackedLink } from '../lib/og-resolver.js';
+import { resolveTrackedLinkBaseUrl } from '../lib/link-base-url.js';
+import { awardActivityMileage } from '../services/activity-mileage.js';
 
 const trackedLinks = new Hono<Env>();
 
 function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
-  const trackingUrl = `${baseUrl}/t/${row.id}`;
+  // Prefer the short code (baseUrl may be a branded short domain).
+  const trackingUrl = `${baseUrl}/t/${row.short_code ?? row.id}`;
   return {
     id: row.id,
     name: row.name,
     originalUrl: row.original_url,
     trackingUrl,
+    shortCode: row.short_code,
     tagId: row.tag_id,
     scenarioId: row.scenario_id,
     introTemplateId: row.intro_template_id,
@@ -43,6 +49,11 @@ function serializeTrackedLink(row: TrackedLink, baseUrl: string) {
 function getBaseUrl(c: { req: { url: string } }): string {
   const url = new URL(c.req.url);
   return `${url.protocol}//${url.host}`;
+}
+
+/** Base for admin-facing trackingUrl: branded short domain or the request origin. */
+async function resolveApiLinkBase(c: { env: { DB: D1Database }; req: { url: string } }): Promise<string> {
+  return resolveTrackedLinkBaseUrl(c.env.DB, getBaseUrl(c));
 }
 
 /**
@@ -73,7 +84,7 @@ async function resolveLinkAccount(
 trackedLinks.get('/api/tracked-links', async (c) => {
   try {
     const items = await getTrackedLinks(c.env.DB);
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({ success: true, data: items.map((item) => serializeTrackedLink(item, base)) });
   } catch (err) {
     console.error('GET /api/tracked-links error:', err);
@@ -90,7 +101,7 @@ trackedLinks.get('/api/tracked-links/:id', async (c) => {
       return c.json({ success: false, error: 'Tracked link not found' }, 404);
     }
     const clicks = await getLinkClicks(c.env.DB, id);
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({
       success: true,
       data: {
@@ -142,7 +153,7 @@ trackedLinks.post('/api/tracked-links', async (c) => {
       ogImageUrl: body.ogImageUrl ?? null,
     });
 
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({ success: true, data: serializeTrackedLink(link, base) }, 201);
   } catch (err) {
     console.error('POST /api/tracked-links error:', err);
@@ -171,7 +182,7 @@ trackedLinks.patch('/api/tracked-links/:id', async (c) => {
     if (!link) {
       return c.json({ success: false, error: 'Tracked link not found' }, 404);
     }
-    const base = getBaseUrl(c);
+    const base = await resolveApiLinkBase(c);
     return c.json({ success: true, data: serializeTrackedLink(link, base) });
   } catch (err) {
     console.error('PATCH /api/tracked-links/:id error:', err);
@@ -269,13 +280,14 @@ function buildAppRedirectHtml(destinationUrl: string): string {
 }
 
 // GET /t/:linkId — click tracking redirect (no auth, fast redirect)
+// :linkId accepts both the legacy UUID and the 7-char short code.
 trackedLinks.get('/t/:linkId', async (c) => {
   const linkId = c.req.param('linkId');
   const lineUserId = c.req.query('lu') ?? null;
   let friendId = c.req.query('f') ?? null;
 
   // Look up the link first
-  const link = await getTrackedLinkById(c.env.DB, linkId);
+  const link = await getTrackedLinkByIdOrShortCode(c.env.DB, linkId);
 
   if (!link || !link.is_active) {
     return c.json({ success: false, error: 'Link not found' }, 404);
@@ -327,15 +339,34 @@ trackedLinks.get('/t/:linkId', async (c) => {
   ctx.waitUntil(
     (async () => {
       try {
-        // Record the click
-        await recordLinkClick(c.env.DB, linkId, friendId);
+        // Record the click (link.id, not the raw param — it may be a short code)
+        const click = await recordLinkClick(c.env.DB, link.id, friendId);
+
+        if (friendId) {
+          await awardActivityMileage(c.env.DB, {
+            eventType: 'link_clicked',
+            source: 'tracked_link',
+            sourceEventId: click.id,
+            friendId,
+            subjectKey: link.id,
+            metadata: { trackedLinkId: link.id, linkName: link.name },
+            occurredAt: click.clicked_at,
+          });
+        }
 
         // Run automatic actions if a friend is identified
         if (friendId) {
           const actions: Promise<unknown>[] = [];
 
           if (link.tag_id) {
-            actions.push(addTagToFriend(c.env.DB, friendId, link.tag_id));
+            // Guarded attach: fires tag_added scenario enrollment only when
+            // the tag is NEWLY applied — an in-app /t click must start a
+            // tag-triggered campaign exactly like the /auth/line ref path
+            // does, and stay silent on re-clicks.
+            actions.push(attachTagAndFireSideEffects(c.env.DB, friendId, link.tag_id, {
+              defaultAccessToken: c.env.LINE_CHANNEL_ACCESS_TOKEN,
+              workerUrl: c.env.WORKER_URL,
+            }));
           }
 
           if (link.scenario_id) {
