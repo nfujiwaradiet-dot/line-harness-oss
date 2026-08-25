@@ -72,7 +72,7 @@ function StatCard({ title, value, loading, icon, href, accentColor = '#06C755' }
 }
 
 export default function DashboardPage() {
-  const { selectedAccountId, selectedAccount } = useAccount()
+  const { selectedAccountId, selectedAccount, loading: accountsLoading } = useAccount()
   const [stats, setStats] = useState<DashboardStats>({
     friendCount: null,
     activeScenarioCount: null,
@@ -85,6 +85,8 @@ export default function DashboardPage() {
   const [error, setError] = useState('')
 
   useEffect(() => {
+    if (accountsLoading) return
+
     const load = async () => {
       setLoading(true)
       setError('')
@@ -132,7 +134,7 @@ export default function DashboardPage() {
     }
 
     load()
-  }, [selectedAccountId])
+  }, [selectedAccountId, accountsLoading])
 
   return (
     <div>
