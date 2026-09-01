@@ -13,10 +13,13 @@ vi.mock('@line-crm/db', () => ({
 const { checkAccountHealth } = await import('./ban-monitor.js');
 
 /** messages_log の集計だけを返す最小の D1 スタブ。 */
-function dbStub(): D1Database {
+function dbStub(perAccountCounts: Array<{ line_account_id: string; count: number }> = []): D1Database {
   return {
     prepare: () => ({
-      bind: () => ({ first: async () => ({ count: 0 }) }),
+      bind: () => ({
+        first: async () => ({ count: 0 }),
+        all: async () => ({ results: perAccountCounts }),
+      }),
     }),
   } as unknown as D1Database;
 }
@@ -103,5 +106,38 @@ describe('checkAccountHealth', () => {
       errorCode: 500,
       riskLevel: 'normal',
     });
+  });
+
+  test('他アカウントの送信数は自アカウントの警告に影響しない', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 200 })));
+    getLineAccounts.mockResolvedValue([
+      { id: 'acc-1', channel_access_token: 'token', is_active: 1 },
+      { id: 'acc-2', channel_access_token: 'token2', is_active: 1 },
+    ]);
+    getAccountHealthLogs.mockResolvedValue([]);
+
+    // acc-2 が大量送信していても acc-1 は warning にならないこと
+    await checkAccountHealth(dbStub([{ line_account_id: 'acc-2', count: 6000 }]));
+
+    expect(createAccountHealthLog).toHaveBeenCalledTimes(2);
+    const acc1Call = createAccountHealthLog.mock.calls.find(
+      (c) => c[1].lineAccountId === 'acc-1',
+    );
+    const acc2Call = createAccountHealthLog.mock.calls.find(
+      (c) => c[1].lineAccountId === 'acc-2',
+    );
+    expect(acc1Call?.[1]).toMatchObject({ riskLevel: 'normal' });
+    expect(acc2Call?.[1]).toMatchObject({ riskLevel: 'warning' });
+  });
+
+  test('アクティブなアカウントが無ければDBに問い合わせない', async () => {
+    getLineAccounts.mockResolvedValue([
+      { id: 'acc-1', channel_access_token: 'token', is_active: 0 },
+    ]);
+
+    await checkAccountHealth(dbStub());
+
+    expect(getAccountHealthLogs).not.toHaveBeenCalled();
+    expect(createAccountHealthLog).not.toHaveBeenCalled();
   });
 });

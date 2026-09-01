@@ -15,39 +15,57 @@ export async function checkAccountHealth(
   db: D1Database,
 ): Promise<void> {
   const accounts = await getLineAccounts(db);
+  const activeAccounts = accounts.filter((a) => a.is_active);
+  if (activeAccounts.length === 0) return;
 
-  for (const account of accounts) {
-    if (!account.is_active) continue;
+  const jstMs = Date.now() + 9 * 60 * 60_000;
+  // 直近1時間のメッセージログからエラーパターンを推定
+  // (実際のLINE APIエラーはログに残らないが、送信成功率から推定)
+  const oneHourAgo = new Date(jstMs - 60 * 60_000).toISOString().slice(0, -1) + '+09:00';
 
+  // 以前はこのCOUNTクエリをアカウントごと(=アクティブアカウント数ぶん)発行しており、
+  // かつline_account_idで絞り込んでいなかったため「システム全体の直近1時間送信数」を
+  // 全アカウントに対して重複計算していた(2026-09-02: D1 rows_read超過の主因の一つ)。
+  // 1クエリでline_account_id別に集計し、各アカウント自身の送信数だけを使うよう修正。
+  const sentByAccount = await getOutgoingCountsByAccount(db, oneHourAgo);
+
+  for (const account of activeAccounts) {
     try {
-      await checkSingleAccount(db, account);
+      await checkSingleAccount(db, account, jstMs, sentByAccount.get(account.id) ?? 0);
     } catch (err) {
       console.error(`ヘルスチェックエラー (account ${account.id}):`, err);
     }
   }
 }
 
+async function getOutgoingCountsByAccount(
+  db: D1Database,
+  sinceIso: string,
+): Promise<Map<string, number>> {
+  const { results } = await db
+    .prepare(
+      `SELECT line_account_id, COUNT(*) as count FROM messages_log
+       WHERE direction = 'outgoing' AND created_at >= ? AND line_account_id IS NOT NULL
+       GROUP BY line_account_id`,
+    )
+    .bind(sinceIso)
+    .all<{ line_account_id: string; count: number }>();
+
+  const map = new Map<string, number>();
+  for (const row of results ?? []) {
+    map.set(row.line_account_id, row.count);
+  }
+  return map;
+}
+
 async function checkSingleAccount(
   db: D1Database,
   account: { id: string; channel_access_token: string },
+  jstMs: number,
+  totalSent: number,
 ): Promise<void> {
-  const jstMs = Date.now() + 9 * 60 * 60_000;
   const now = new Date(jstMs);
   const checkPeriod = now.toISOString().slice(0, -1) + '+09:00';
-
-  // 直近1時間のメッセージログからエラーパターンを推定
-  // (実際のLINE APIエラーはログに残らないが、送信成功率から推定)
-  const oneHourAgo = new Date(jstMs - 60 * 60_000).toISOString().slice(0, -1) + '+09:00';
-
-  const sentMessages = await db
-    .prepare(
-      `SELECT COUNT(*) as count FROM messages_log
-       WHERE direction = 'outgoing' AND created_at >= ?`,
-    )
-    .bind(oneHourAgo)
-    .first<{ count: number }>();
-
-  const totalSent = sentMessages?.count ?? 0;
 
   // LINE APIにヘルスチェックリクエスト
   let errorCode: number | null = null;
