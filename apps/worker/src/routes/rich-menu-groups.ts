@@ -777,7 +777,10 @@ function createLineClient(channelAccessToken: string): LineRichMenuClient {
       const res = await fetch(`https://api-data.line.me/v2/bot/richmenu/${richMenuId}/content`, {
         method: 'POST',
         headers: { Authorization: auth, 'Content-Type': contentType },
-        body: image,
+        // TS's DOM lib types Uint8Array generically over ArrayBufferLike, which no
+        // longer structurally satisfies BodyInit even though fetch accepts a
+        // Uint8Array at runtime (Workers runtime, not a DOM quirk).
+        body: image as BodyInit,
       });
       if (!res.ok) throw new Error(`LINE uploadRichMenuImage failed: ${res.status} ${await res.text()}`);
     },
