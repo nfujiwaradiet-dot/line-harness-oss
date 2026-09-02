@@ -1272,7 +1272,8 @@ CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_google_calendar_connections_staff
   ON google_calendar_connections (line_account_id, staff_id, is_active);
 
-CREATE INDEX IF NOT EXISTS idx_health_logs_account ON account_health_logs (line_account_id);
+CREATE INDEX IF NOT EXISTS idx_health_logs_account_created_at
+  ON account_health_logs (line_account_id, created_at DESC);
 
 CREATE INDEX IF NOT EXISTS idx_idempotency_expires ON booking_idempotency_keys (expires_at);
 
