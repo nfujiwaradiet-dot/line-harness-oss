@@ -283,9 +283,15 @@ export async function scheduled(
   // Covers edge cases where webhook/LIFF paths fail to set it (e.g. env-secret
   // mismatch, missing account param). Only runs when exactly one active account
   // exists so there is no ambiguity about which account owns the friend.
+  //
+  // This previously ran on every minute-tick despite the comment (no isFiveMinuteTick
+  // gate), and had no index for `WHERE line_account_id IS NULL`, so it scanned the
+  // whole friends table ~1,440+ times/day even with nothing to backfill (2026-09-03:
+  // ~255k of the day's D1 rows_read). Migration 073 adds the missing partial index;
+  // gating to the 5-minute tick here cuts the redundant call count too.
   try {
     const activeAccounts = dbAccounts.filter(a => a.is_active);
-    if (activeAccounts.length === 1) {
+    if (isFiveMinuteTick(event) && activeAccounts.length === 1) {
       const accountId = activeAccounts[0].id;
       const result = await env.DB
         .prepare(`UPDATE friends SET line_account_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%f', 'now', '+9 hours') WHERE line_account_id IS NULL`)

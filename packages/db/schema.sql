@@ -29,6 +29,11 @@ CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
 CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
 CREATE INDEX IF NOT EXISTS idx_friends_follow_tenure ON friends(is_following, current_follow_started_at);
+-- Speeds the every-tick backfill (`WHERE line_account_id IS NULL`) in scheduled.ts,
+-- which otherwise scans the whole table on every cron tick even with nothing to do.
+CREATE INDEX IF NOT EXISTS idx_friends_line_account_id_null
+  ON friends (id)
+  WHERE line_account_id IS NULL;
 
 -- ============================================================
 -- Tags
