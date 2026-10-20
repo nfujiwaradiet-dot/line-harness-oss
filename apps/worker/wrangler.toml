@@ -57,8 +57,12 @@ new_sqlite_classes = ["TenantScheduler"]
 # cron のみで運用を続けられるようにするため)。両方が同じ分に発火しても、
 # scheduled() が呼ぶジョブ本体は元々 (6時間境界で2 trigger が同時に鳴る
 # 現行構成のもと) 同時実行に耐える楽観ロック/claim パターンで書かれている。
+#
+# フォーク独自 (2026-10-20): Workers 無料プランの CPU 上限 (10ms/回) 超過メール
+# 対策で、分足を5分足に変更し、DO alarm 側は止めた (tenant-scheduler.ts 参照)。
+# 毎分 cron + 毎分 DO alarm で同じジョブが1日2880回走っていたため。
 [triggers]
-crons = ["* * * * *", "0 */6 * * *"]
+crons = ["*/5 * * * *", "0 */6 * * *"]
 
 # ═══════════════════════════════════════════════════════════════
 # Phase 5 self-update vars — consumed by /admin/update/*. Secrets
@@ -114,4 +118,4 @@ name = "TENANT_SCHEDULER"
 class_name = "TenantScheduler"
 
 [env.production.triggers]
-crons = ["* * * * *", "0 */6 * * *"]
+crons = ["*/5 * * * *", "0 */6 * * *"]

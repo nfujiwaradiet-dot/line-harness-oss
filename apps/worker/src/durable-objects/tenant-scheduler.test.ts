@@ -14,6 +14,7 @@ import {
   SCHEDULER_TICK_INTERVAL_MS,
   SCHEDULER_INSTANCE_NAME,
   TenantScheduler,
+  DO_ALARM_ENABLED,
   type AlarmStorage,
 } from './tenant-scheduler.js';
 
@@ -160,7 +161,7 @@ describe('ensureAlarmArmed — 自己修復', () => {
   });
 });
 
-describe('ensureSchedulerArmed — webhook から叩かれる薄いラッパー', () => {
+describe.skipIf(!DO_ALARM_ENABLED)('ensureSchedulerArmed — webhook から叩かれる薄いラッパー', () => {
   function fakeNamespace(stub: { ensureArmed: ReturnType<typeof vi.fn> }) {
     const idFromNameCalls: string[] = [];
     return {
@@ -199,7 +200,7 @@ describe('ensureSchedulerArmed — webhook から叩かれる薄いラッパー'
   });
 });
 
-describe('TenantScheduler クラス — DO ランタイムへの配線', () => {
+describe.skipIf(!DO_ALARM_ENABLED)('TenantScheduler クラス — DO ランタイムへの配線', () => {
   function fakeCtx(storage: AlarmStorage) {
     let resolveReady: () => void;
     const ready = new Promise<void>((res) => {
@@ -255,5 +256,29 @@ describe('TenantScheduler クラス — DO ランタイムへの配線', () => {
 
     // 既にアーム済みなので ensureArmed() 単体では変化しない（冪等）。
     expect(storage.alarm()).toBe(armedAtStart);
+  });
+});
+
+// フォーク独自: DO alarm を止めている間の挙動 (cron だけで回す構成)
+describe.runIf(!DO_ALARM_ENABLED)('DO_ALARM_ENABLED=false — alarm を使わない', () => {
+  test('ensureSchedulerArmed は DO を呼ばない', async () => {
+    const get = vi.fn();
+    const ns = { idFromName: vi.fn(), get };
+    await ensureSchedulerArmed({ TENANT_SCHEDULER: ns as never });
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  test('コンストラクタは arm せず、alarm() は仕事をせず既存 alarm を消す', async () => {
+    const storage = Object.assign(fakeStorage(1_700_000_000_000), {
+      deleteAlarm: vi.fn(async () => {}),
+    });
+    const ctx = { storage, waitUntil: vi.fn(), blockConcurrencyWhile: vi.fn() };
+    const scheduler = new TenantScheduler(ctx as never, { DB: {} } as never);
+    expect(ctx.blockConcurrencyWhile).not.toHaveBeenCalled();
+
+    await scheduler.alarm();
+    expect(storage.deleteAlarm).toHaveBeenCalled();
+    expect(storage.calls).not.toContain('setAlarm');
+    expect(scheduledMock).not.toHaveBeenCalled();
   });
 });

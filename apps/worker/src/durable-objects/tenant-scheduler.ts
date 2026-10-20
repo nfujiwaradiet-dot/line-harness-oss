@@ -37,6 +37,15 @@ import type { Env } from '../index.js';
 /** 分足 cron ("* * * * *") と同じ粒度で自分自身を再アームする間隔。 */
 export const SCHEDULER_TICK_INTERVAL_MS = 60_000;
 
+/**
+ * フォーク独自 (2026-10-20): DO alarm による自走を止めるスイッチ。
+ * Cron Trigger は正常に発火しており、alarm と二重に scheduled() が走って
+ * Workers 無料プランの CPU 上限超過メールの原因になっていたため false にした。
+ * false の間は arm も再アームもせず、既に積まれている alarm は次の発火で
+ * 仕事をせずに消える。cron が止まるような事態になったら true に戻す。
+ */
+export const DO_ALARM_ENABLED = false;
+
 /** DO インスタンスは1テナントにつき1つで足りるので固定名で解決する。 */
 export const SCHEDULER_INSTANCE_NAME = 'scheduler';
 
@@ -125,6 +134,7 @@ export async function ensureAlarmArmed(
 export class TenantScheduler extends DurableObject<Env['Bindings']> {
   constructor(ctx: DurableObjectState, env: Env['Bindings']) {
     super(ctx, env);
+    if (!DO_ALARM_ENABLED) return;
     // このオブジェクトへの最初のアクセス (どの経路であれ) で必ず一度は
     // armed 状態にする。blockConcurrencyWhile 中は他のリクエストが待たされる
     // ので、以後の alarm()/ensureArmed() 呼び出しと競合しない。
@@ -140,6 +150,10 @@ export class TenantScheduler extends DurableObject<Env['Bindings']> {
   }
 
   async alarm(): Promise<void> {
+    if (!DO_ALARM_ENABLED) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
     await runSchedulerTick(this.ctx.storage, (event) =>
       // scheduled() は ScheduledEvent (Event のサブクラス) を受け取る型だが、
       // 実際に読むのは .cron と .scheduledTime の2フィールドだけなので、
@@ -154,6 +168,7 @@ export class TenantScheduler extends DurableObject<Env['Bindings']> {
 
   /** webhook など受信経路から叩かれる自己修復フック。毎リクエストで呼んでよい。 */
   async ensureArmed(): Promise<void> {
+    if (!DO_ALARM_ENABLED) return;
     await ensureAlarmArmed(this.ctx.storage);
   }
 }
@@ -166,6 +181,8 @@ export class TenantScheduler extends DurableObject<Env['Bindings']> {
 export async function ensureSchedulerArmed(env: {
   TENANT_SCHEDULER?: DurableObjectNamespace<TenantScheduler>;
 }): Promise<void> {
+  // 無効時は DO を起こすこと自体をしない (webhook ごとの余計な呼び出しを省く)
+  if (!DO_ALARM_ENABLED) return;
   try {
     const ns = env.TENANT_SCHEDULER;
     if (!ns) return;
