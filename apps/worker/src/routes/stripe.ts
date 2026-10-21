@@ -99,8 +99,9 @@ stripe.post('/api/integrations/stripe/webhook', async (c) => {
       }
       body = JSON.parse(rawBody) as StripeWebhookBody;
     } else {
-      // シークレット未設定（開発環境向け）
-      body = await c.req.json<StripeWebhookBody>();
+      // フォーク独自 (2026-10-20): 未設定時に署名検証を省略すると誰でも偽の決済
+      // イベントを送れるため受付を止める (本家 v0.24.3 と同じ 503)。Stripe 未使用。
+      return c.json({ success: false, error: 'Stripe webhook is not configured' }, 503);
     }
 
     // 冪等性チェック

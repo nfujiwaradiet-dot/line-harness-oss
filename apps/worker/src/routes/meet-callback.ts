@@ -5,8 +5,16 @@ import { LineClient } from '@line-crm/line-sdk';
 
 const app = new Hono<Env>();
 
+// フォーク独自 (2026-10-20): 送信元検証が無く、誰でも友だちへ LINE を送らせられる
+// ため受付を止める (本家 v0.24.3 は署名キー未設定時 503)。Meet Harness は未使用。
+const MEET_CALLBACK_ENABLED = false;
+
 // Meet Harness calls this when a hearing session completes
 app.post('/api/meet-callback', async (c) => {
+  if (!MEET_CALLBACK_ENABLED) {
+    return c.json({ success: false, error: 'Meet callback is not configured' }, 503);
+  }
+
   const body = await c.req.json<{
     session_id: string;
     scenario_id: string;
