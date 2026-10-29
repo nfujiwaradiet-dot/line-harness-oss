@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { api } from '@/lib/api'
+import type { AccountDeliveryHealth } from '@/lib/api'
 import { getApiBase } from '@/lib/api-base'
 import CcPromptButton from '@/components/cc-prompt-button'
 import { useAccount } from '@/contexts/account-context'
 import Header from '@/components/layout/header'
-import { HarnessStatCard } from '@/components/ui/harness-ui'
+import { formatCount, HarnessStatCard, HarnessStatCell } from '@/components/ui/harness-ui'
+import type { HarnessStatCellTone } from '@/components/ui/harness-ui'
 import { Badge } from '@cloudflare/kumo/components/badge'
 import { Banner } from '@cloudflare/kumo/components/banner'
 import { Button } from '@cloudflare/kumo/components/button'
@@ -100,6 +102,159 @@ function FriendAddLinkCard() {
   )
 }
 
+/** "+5" / "−3" / "±0"; null (insight not ready) renders as em dash. */
+function formatDelta(value: number | null): string {
+  if (value === null) return '—'
+  if (value > 0) return `+${value.toLocaleString('ja-JP')}`
+  if (value < 0) return `−${Math.abs(value).toLocaleString('ja-JP')}`
+  return '±0'
+}
+
+/** "20260901" → "9/1" for the compact as-of label. */
+function formatInsightDate(yyyyMmDd: string | null): string | null {
+  if (!yyyyMmDd || !/^\d{8}$/.test(yyyyMmDd)) return null
+  return `${Number(yyyyMmDd.slice(4, 6))}/${Number(yyyyMmDd.slice(6, 8))}`
+}
+
+/** Success/danger tone for a day-over-day delta; ±0 and unknown stay muted. */
+function deltaTone(delta: number | null, upIsGood: boolean): HarnessStatCellTone | undefined {
+  if (delta === null || delta === 0) return undefined
+  return (upIsGood ? delta > 0 : delta < 0) ? 'positive' : 'negative'
+}
+
+/**
+ * Quota cell contents. Precedence, most-specific first: unlimited plan →
+ * remaining computable → fetch failed. A limited plan whose consumption call
+ * failed lands in the last branch (value —, alert) so a broken quota fetch is
+ * as loud as a real shortage — the 2026-09-01 incident was invisible data.
+ */
+function quotaCell(account: AccountDeliveryHealth): { value: string; sub?: string; alert: boolean } {
+  const { quota, quotaAlert, errors } = account
+  if (quota.type === 'none') {
+    return { value: '∞', sub: '上限なしプラン', alert: false }
+  }
+  if (quota.remaining !== null) {
+    return {
+      value: formatCount(quota.remaining),
+      sub: `上限 ${formatCount(quota.limit)} ・消費 ${formatCount(quota.consumption)}`,
+      alert: quotaAlert,
+    }
+  }
+  const fetchFailed = errors.includes('quota') || errors.includes('consumption')
+  return { value: '—', sub: fetchFailed ? '取得失敗（要確認）' : undefined, alert: fetchFailed }
+}
+
+/** Sub line for the insight cells: delta when ready, otherwise why not. */
+function insightSub(account: AccountDeliveryHealth, delta: number | null): string {
+  if (account.insight.status === 'ready') return `前日比 ${formatDelta(delta)}`
+  return account.insight.status === 'unready' ? 'LINE集計待ち' : '取得失敗'
+}
+
+// 2026-09-01 の一斉配信事故（2アカウントがクォータ不足で全滅、UI 上どこにも
+// 出ていなかった）を受けたセクション。クォータはリアルタイム、友だち/ブロックの
+// インサイトは LINE 側の集計が前日分までなので as-of がずれる点をラベルで明示する。
+function DeliveryHealthSection() {
+  const [health, setHealth] = useState<AccountDeliveryHealth[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      try {
+        const res = await api.lineAccounts.deliveryHealth()
+        if (cancelled) return
+        if (res.success) {
+          setHealth(res.data.accounts)
+        } else {
+          setError('配信健全性の取得に失敗しました')
+        }
+      } catch {
+        if (!cancelled) setError('配信健全性の取得に失敗しました')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (!loading && !error && (health?.length ?? 0) === 0) return null
+
+  return (
+    <section className="mb-6" aria-label="配信健全性">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-kumo-strong">アカウント別 配信健全性</h2>
+        <p className="text-[11px] text-kumo-subtle">クォータ=リアルタイム / 友だち・ブロック=前日時点</p>
+      </div>
+
+      {error ? (
+        <Banner variant="alert" title="配信健全性を読み込めませんでした" description={error} />
+      ) : null}
+
+      {loading ? (
+        <LayerCard className="p-4">
+          <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => (
+              <div key={i} className="h-20 animate-pulse rounded-lg bg-gray-100" />
+            ))}
+          </div>
+        </LayerCard>
+      ) : (
+        <div className="space-y-3">
+          {health?.map((account) => {
+            const asOf = formatInsightDate(account.insight.date)
+            const quota = quotaCell(account)
+            return (
+              <LayerCard key={account.lineAccountId} className="p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <p className="text-sm font-semibold text-kumo-strong">{account.name}</p>
+                  {account.quotaAlert ? (
+                    <Badge variant="error">クォータ不足: 全員配信不可</Badge>
+                  ) : account.errors.length > 0 ? (
+                    <Badge variant="neutral">一部データ取得失敗</Badge>
+                  ) : account.insight.status === 'unready' ? (
+                    <Badge variant="neutral">インサイト集計待ち</Badge>
+                  ) : (
+                    <Badge variant="success">正常</Badge>
+                  )}
+                </div>
+                <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+                  <HarnessStatCell
+                    title="配信クォータ 残り"
+                    value={quota.value}
+                    sub={quota.sub}
+                    alert={quota.alert}
+                  />
+                  <HarnessStatCell
+                    title={asOf ? `友だち数 (${asOf})` : '友だち数'}
+                    value={formatCount(account.insight.followers)}
+                    sub={insightSub(account, account.insight.followersDelta)}
+                    subTone={deltaTone(account.insight.followersDelta, true)}
+                  />
+                  <HarnessStatCell
+                    title={asOf ? `ブロック数 (${asOf})` : 'ブロック数'}
+                    value={formatCount(account.insight.blocks)}
+                    sub={insightSub(account, account.insight.blocksDelta)}
+                    subTone={deltaTone(account.insight.blocksDelta, false)}
+                  />
+                  <HarnessStatCell
+                    title="今月の配信済み通数"
+                    value={formatCount(account.messagesThisMonth)}
+                    sub="push配信のみ・月初から"
+                  />
+                </div>
+              </LayerCard>
+            )
+          })}
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function DashboardPage() {
   const { selectedAccountId, selectedAccount, loading: accountsLoading } = useAccount()
   const [stats, setStats] = useState<DashboardStats>({
@@ -177,7 +332,13 @@ export default function DashboardPage() {
 
       {error && <Banner className="mb-6" variant="error" title="データを読み込めませんでした" description={error} />}
 
+      <DeliveryHealthSection />
+
       <FriendAddLinkCard />
+      <Link href="/plugins" className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-5 transition-colors hover:bg-emerald-100">
+        <div><p className="text-xs font-semibold text-emerald-700">PLUGIN MARKET · BETA</p><p className="mt-1 font-bold text-gray-900">その数行を、あなたのプラグインに。</p><p className="mt-1 text-sm text-gray-600">配信・自動処理・外部連携を、本体の外へ。</p></div>
+        <span className="text-sm font-semibold text-emerald-800">マーケットを見る →</span>
+      </Link>
 
       {/* Demo banner */}
       <a

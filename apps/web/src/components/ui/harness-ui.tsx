@@ -48,6 +48,50 @@ export function HarnessPageHeader({
   )
 }
 
+/** Shared count formatting for stat cards/cells: null renders as an em dash. */
+export function formatCount(value: number | null): string {
+  return value !== null ? value.toLocaleString('ja-JP') : '—'
+}
+
+export type HarnessStatCellTone = 'positive' | 'negative'
+
+export interface HarnessStatCellProps {
+  title: string
+  value: string
+  sub?: string
+  /** Alert state paints the whole cell in danger tokens and wins over subTone. */
+  alert?: boolean
+  subTone?: HarnessStatCellTone
+}
+
+/**
+ * Compact stat tile for dense per-entity grids (e.g. the dashboard's
+ * delivery-health cards) — the small sibling of HarnessStatCard, which is a
+ * full-size linked card.
+ */
+export function HarnessStatCell({ title, value, sub, alert = false, subTone }: HarnessStatCellProps) {
+  const subClass = alert
+    ? 'text-kumo-danger'
+    : subTone === 'positive'
+      ? 'text-kumo-success'
+      : subTone === 'negative'
+        ? 'text-kumo-danger'
+        : 'text-kumo-subtle'
+  return (
+    <div
+      className={`rounded-lg border p-3 ${
+        alert ? 'border-kumo-danger bg-kumo-danger-tint' : 'border-kumo-line bg-kumo-tint'
+      }`}
+    >
+      <p className={`text-xs font-medium ${alert ? 'text-kumo-danger' : 'text-kumo-subtle'}`}>{title}</p>
+      <p className={`mt-1 text-xl font-bold tabular-nums ${alert ? 'text-kumo-danger' : 'text-kumo-strong'}`}>
+        {value}
+      </p>
+      {sub ? <p className={`mt-0.5 text-[11px] ${subClass}`}>{sub}</p> : null}
+    </div>
+  )
+}
+
 export interface HarnessStatCardProps {
   title: string
   value: number | null
@@ -83,7 +127,7 @@ export function HarnessStatCard({
               <div className="h-8 w-20 animate-pulse rounded bg-gray-100" />
             ) : (
               <p className="text-3xl font-bold tabular-nums text-gray-900">
-                {value !== null ? value.toLocaleString('ja-JP') : '—'}
+                {formatCount(value)}
               </p>
             )}
             {subtitle && !loading ? <p className="mt-1 text-xs text-gray-400">{subtitle}</p> : null}

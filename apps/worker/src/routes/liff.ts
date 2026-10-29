@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { createLiffQueryReader } from '../lib/liff-query.js';
 import {
   getFriendByLineUserId,
   getFriendByLineUserIdForAccount,
@@ -569,12 +570,7 @@ liffRoutes.get('/auth/line', async (c) => {
  * Same query params as /auth/line. No HTML rendering, no smart logic.
  */
 liffRoutes.get('/auth/oauth', async (c) => {
-  // When opened via LIFF, original query params arrive as liff.state=?ref=xxx&...
-  // Parse them and merge so downstream code can use q() as normal.
-  const liffStateRaw = c.req.query('liff.state') || '';
-  const liffStateParams = new URLSearchParams(liffStateRaw.startsWith('?') ? liffStateRaw.slice(1) : liffStateRaw);
-  const q = (key: string) => c.req.query(key) || liffStateParams.get(key) || '';
-
+  const q = createLiffQueryReader((key) => c.req.query(key));
   const ref = q('ref');
   const redirect = q('redirect');
   const formId = q('form');
@@ -601,7 +597,7 @@ liffRoutes.get('/auth/oauth', async (c) => {
     const account = await getLineAccountByChannelId(c.env.DB, accountParam);
     if (account?.login_channel_id) channelId = account.login_channel_id;
   } else {
-    const poolSlug = c.req.query('pool') || 'main';
+    const poolSlug = q('pool') || 'main';
     const pool = await getTrafficPoolBySlug(c.env.DB, poolSlug);
     if (pool) {
       const account = await getRandomPoolAccount(c.env.DB, pool.id);

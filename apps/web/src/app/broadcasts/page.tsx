@@ -6,7 +6,7 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { PlusIcon, TrashIcon } from '@phosphor-icons/react'
 import { Badge } from '@cloudflare/kumo/components/badge'
-import type { BadgeVariant } from '@cloudflare/kumo/components/badge'
+import { broadcastStatus } from '@/lib/broadcast-status'
 import { Banner } from '@cloudflare/kumo/components/banner'
 import { Button } from '@cloudflare/kumo/components/button'
 import { Dialog } from '@cloudflare/kumo/components/dialog'
@@ -42,13 +42,6 @@ const ccPrompts = [
 データに基づいた根拠も示してください。`,
   },
 ]
-
-const statusConfig: Record<ApiBroadcast['status'], { label: string; variant: BadgeVariant }> = {
-  draft: { label: '下書き', variant: 'neutral' },
-  scheduled: { label: '予約済み', variant: 'info' },
-  sending: { label: '送信中', variant: 'warning' },
-  sent: { label: '送信完了', variant: 'success' },
-}
 
 function formatDatetime(iso: string | null): string {
   if (!iso) return '-'
@@ -187,7 +180,7 @@ function BroadcastList() {
               </Table.Header>
               <Table.Body>
                 {visibleBroadcasts.map((broadcast) => {
-                  const status = statusConfig[broadcast.status]
+                  const status = broadcastStatus(broadcast)
                   const tagName = getTagName(broadcast.targetTagId)
                   const isDedup = broadcast.targetType === 'multi-account-dedup'
                   const insight = insights[broadcast.id]
@@ -200,7 +193,12 @@ function BroadcastList() {
                         </div>
                         <p className="mt-0.5 text-xs text-kumo-subtle">{broadcast.messageType === 'text' ? 'テキスト' : broadcast.messageType === 'image' ? '画像' : 'Flex'}</p>
                       </Table.Cell>
-                      <Table.Cell><Badge variant={status.variant} appearance="dot">{status.label}</Badge></Table.Cell>
+                      <Table.Cell>
+                        <Badge variant={status.variant} appearance="dot">{status.label}</Badge>
+                        {broadcast.lastError ? (
+                          <p className="mt-1 max-w-56 text-xs text-kumo-danger" title={broadcast.lastError}>{broadcast.lastError}</p>
+                        ) : null}
+                      </Table.Cell>
                       <Table.Cell>{isDedup ? `重複除外${tagName ? `：${tagName}` : ''}` : broadcast.targetType === 'all' ? '全員' : tagName ? `タグ：${tagName}` : 'タグ指定'}</Table.Cell>
                       <Table.Cell className="text-kumo-subtle">{formatDatetime(broadcast.scheduledAt)}</Table.Cell>
                       <Table.Cell className="text-kumo-subtle">{formatDatetime(broadcast.sentAt)}</Table.Cell>
