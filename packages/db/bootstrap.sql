@@ -1308,6 +1308,10 @@ CREATE INDEX IF NOT EXISTS idx_friends_follow_tenure ON friends(is_following, cu
 
 CREATE INDEX IF NOT EXISTS idx_friends_ig_igsid ON friends (ig_igsid);
 
+CREATE INDEX IF NOT EXISTS idx_friends_line_account_id_null
+  ON friends (id)
+  WHERE line_account_id IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_friends_line_user_id ON friends (line_user_id);
 
 CREATE INDEX IF NOT EXISTS idx_friends_user_id ON friends (user_id);
