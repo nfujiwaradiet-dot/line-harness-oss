@@ -74,7 +74,7 @@ import {
   upsertFriend,
 } from '@line-crm/db';
 import { fireEvent } from '../services/event-bus.js';
-import { webhook } from './webhook.js';
+import { isUnblockFollow, webhook } from './webhook.js';
 
 function setupApp() {
   const app = new Hono();
@@ -480,5 +480,14 @@ describe('POST /webhook — first-contact existing friends', () => {
     expect(addTagToFriend).not.toHaveBeenCalled();
     expect(getEntryRouteByRefCode).not.toHaveBeenCalled();
     expect(getMessageTemplateById).not.toHaveBeenCalled();
+  });
+});
+
+describe('isUnblockFollow', () => {
+  const base = { type: 'follow', source: { type: 'user', userId: 'U1' }, timestamp: 0, replyToken: 'r' };
+  test('ブロック解除の再フォローだけ true', () => {
+    expect(isUnblockFollow({ ...base, follow: { isUnblocked: true } } as never)).toBe(true);
+    expect(isUnblockFollow({ ...base, follow: { isUnblocked: false } } as never)).toBe(false);
+    expect(isUnblockFollow(base as never)).toBe(false);
   });
 });

@@ -210,6 +210,11 @@ webhook.post('/webhook', async (c) => {
   return c.json({ status: 'ok' }, 200);
 });
 
+/** LINE の follow イベントがブロック解除によるものか（follow.isUnblocked）。 */
+export function isUnblockFollow(event: WebhookEvent): boolean {
+  return (event as { follow?: { isUnblocked?: boolean } }).follow?.isUnblocked === true;
+}
+
 async function handleEvent(
   db: D1Database,
   lineClient: LineClient,
@@ -293,8 +298,10 @@ async function handleEvent(
     const referralRoute: EntryRoute | null = friendRefCode
       ? await getEntryRouteByRefCode(db, friendRefCode)
       : null;
+    // ブロック解除による再フォローでは friend_add シナリオを始めない（フォーク独自）。
+    // 新規の友だちだけにステップ配信を届け、ブロック解除した人にはあいさつと同じく送らない。
     const runAccountScenarios =
-      !referralRoute || referralRoute.run_account_friend_add_scenarios !== 0;
+      (!referralRoute || referralRoute.run_account_friend_add_scenarios !== 0) && !isUnblockFollow(event);
 
     // friend_add シナリオに登録（このアカウントのシナリオのみ）
     // Skip entirely when a referral link explicitly overrides (run_account_friend_add_scenarios=0).
